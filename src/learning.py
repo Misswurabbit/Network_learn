@@ -1,67 +1,76 @@
 import tensorflow as tf
 import numpy as np
-from sklearn.datasets import load_digits
-from sklearn.preprocessing import LabelBinarizer
-from sklearn.model_selection import train_test_split
+from tensorflow.examples.tutorials.mnist import input_data
+
+# 导入数据
+#############################################################
+mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
+
+# hyperparameters
+#############################################################
+lr = 0.001  # learning rate
+training_iters = 100000  # 迭代训练次数
+batch_size = 128  # 一批数据的数量
+n_inputs = 28  # MNIST data input(img shape:28*28)
+n_steps = 28  # time steps
+n_hidden_units = 128  # neurons in hidden layer
+n_classes = 10  # MNIST classes(0-9 digits)
+
+# placeholder
+#############################################################
+# shape(128, 28, 28)
+xs = tf.placeholder(dtype=tf.float32, shape=[None, n_steps, n_inputs], name='x_input')
+# shape(128,10)
+ys = tf.placeholder(dtype=tf.float32, shape=[None, n_classes], name='y_input')
+
+# weights and biases
+#############################################################
+weights = {
+    # shape (28,128)
+    'in': tf.Variable(tf.random_normal(shape=[n_inputs, n_hidden_units])),
+    # shape (128,10)
+    'out': tf.Variable(tf.random_normal(shape=[n_hidden_units, n_classes]))
+}
+biases = {
+    # shape (128) ,you can take it as (,128) when it used next
+    'in': tf.Variable(tf.constant(0.1, shape=[n_hidden_units])),
+    # shape (10) ,you can take it as (,10) when it used next
+    'out': tf.Variable(tf.constant(0.1, shape=[n_classes]))
+}
 
 
-def layer(inputs, in_size, out_size, n_layer, keep_prob, activate_function=None):
-    layer_name = 'Layer%s' % n_layer
-    with tf.name_scope(layer_name):
-        with tf.name_scope('weights'):
-            weights = tf.Variable(tf.random_normal([in_size, out_size]), name='weights')
-        with tf.name_scope('biases'):
-            biases = tf.Variable(tf.random_normal([1, out_size]), name='biases')
-        wx_plus_b = tf.matmul(inputs, weights) + biases
-        wx_plus_b = tf.nn.dropout(wx_plus_b, keep_prob)
-        if activate_function is None:
-            outputs = wx_plus_b
-        else:
-            outputs = activate_function(wx_plus_b)
-        return outputs
+# define the rnn layer
+#############################################################
+def RNN(inputs, weight, biase):
+    # reshape matrix to (128*28,28) for matmul operation
+    inputs = tf.reshape(inputs, [-1, n_inputs])
+    # compute the weights and the biases,shape changes to (128*28,128)
+    inputs = tf.matmul(inputs, weight['in']) + biase['in']
+    # change the shape to (128, 28, 128)
+    inputs = tf.reshape(inputs, [-1, n_steps, n_hidden_units])
+    # init the cell
+    lstm_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden_units, forget_bias=1.0, state_is_tuple=True)
+    init_state = lstm_cell.zero_state(batch_size, dtype=tf.float32)
+    outputs, final_state = tf.nn.dynamic_rnn(lstm_cell, inputs, initial_state=init_state, time_major=False)
+    return tf.matmul(final_state[1], weight['out']) + biase['out']
 
 
-def compute_accuracy(test_xs, test_ys):
-    global prediction
-    y_pre = sess.run(prediction, feed_dict={xs: test_xs})
-    correct_prediction = tf.equal(tf.argmax(y_pre, 1), tf.argmax(test_ys, 1))
-    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    result = sess.run(accuracy, feed_dict={xs: test_xs})
-    return result
+# define the flow
+#############################################################
+prediction = RNN(xs, weights, biases)
+loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=prediction, labels=ys))
+train = tf.train.AdamOptimizer(lr).minimize(loss)
 
-
-# x_data = np.linspace(-1, 1, 300, dtype=np.float32)[:, np.newaxis]
-# noise = np.random.normal(0, 0.05, x_data.shape).astype(np.float32)
-# y_data = np.square(x_data) + noise - 0.5
-digits = load_digits()
-x = digits.data
-y = digits.target
-y = LabelBinarizer().fit_transform(y)
-x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3)
-
-with tf.name_scope('input'):
-    xs = tf.placeholder(dtype=tf.float32, shape=[None, 64], name='x_input')
-    ys = tf.placeholder(dtype=tf.float32, shape=[None, 10], name='y_input')
-    keep_prob = tf.placeholder(tf.float32)
-
-hidden_layer = layer(xs, 64, 50, 1, keep_prob, activate_function=tf.nn.tanh)
-prediction = layer(hidden_layer, 50, 10, 2, keep_prob, activate_function=tf.nn.softmax)
-
-with tf.name_scope('loss'):
-    # loss = tf.reduce_mean(tf.reduce_sum(tf.square(ys - prediction), axis=1), name='loss')
-    cross_entropy = tf.reduce_mean(-tf.reduce_sum(ys * tf.log(prediction), axis=1))
-
-with tf.name_scope('train'):
-    train = tf.train.GradientDescentOptimizer(0.5).minimize(cross_entropy)
-
-init = tf.global_variables_initializer()
-
+# run
+#############################################################
 with tf.Session() as sess:
-    sess.run(init)
-    # writer = tf.summary.FileWriter('', sess.graph)
-    for num in range(1000):
-        # batch_xs, batch_ys = mnist.train.next_batch(100)
-        sess.run(train, feed_dict={xs: x_train, ys: y_train, keep_prob: 0.5})
-        if num % 50 == 0:
-            print(sess.run(cross_entropy, feed_dict={xs: x_train, ys: y_train, keep_prob: 1}))
-            # print(compute_accuracy(x_test, y_test))
+    sess.run(tf.initialize_all_variables())
+    step = 0
+    while step * batch_size < training_iters:
+        batch_xs, batch_ys = mnist.train.next_batch(batch_size)
+        batch_xs = batch_xs.reshape([batch_size, n_steps, n_inputs])
+        sess.run(train, feed_dict={xs: batch_xs, ys: batch_ys})
+        if step % 10 == 0:
+            print(sess.run(loss, feed_dict={xs: batch_xs, ys: batch_ys}))
+        step += 1
+print('Over')
