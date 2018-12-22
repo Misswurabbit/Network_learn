@@ -64,7 +64,7 @@ train = tf.train.AdamOptimizer(lr).minimize(loss)
 # run
 #############################################################
 with tf.Session() as sess:
-    sess.run(tf.initialize_all_variables())
+    sess.run(tf.global_variables_initializer())
     step = 0
     while step * batch_size < training_iters:
         batch_xs, batch_ys = mnist.train.next_batch(batch_size)
